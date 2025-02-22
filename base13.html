@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Enhanced Markdown Editor with Auto-Save</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <style>
+    :root {
+      --bg-color: #1A202C;
+      --text-color: #E2E8F0;
+      --border-color: #4A5568;
+      --button-bg: #2D3748;
+      --button-hover: #4A5568;
+      --heading1: #FC8181;
+      --heading2: #63B3ED;
+      --heading3: #68D391;
+      --heading4: #B794F4;
+      --heading5: #F6AD55;
+      --counter-color: #7F9CF5;
+    }
+
+    [data-theme="light"] {
+      --bg-color: #ffffff;
+      --text-color: #1A202C;
+      --border-color: #ccc;
+      --button-bg: #4CAF50;
+      --button-hover: #45a049;
+      --heading1: #E53E3E;
+      --heading2: #3182CE;
+      --heading3: #38A169;
+      --heading4: #805AD5;
+      --heading5: #DD6B20;
+      --counter-color: #4C51BF;
+    }
+
+    html, body {
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      font-family: monospace;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      transition: background-color 0.3s, color 0.3s;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .editor-container {
+      width: 80%;
+      flex: 1;
+      margin: 20px auto;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    #highlighting, #editor {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      padding: 15px;
+      margin: 0;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      overflow: auto;
+      box-sizing: border-box;
+      line-height: 1.5;
+      font-size: 16px;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+    }
+
+    #highlighting {
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    #editor {
+      background: transparent;
+      color: transparent;
+      caret-color: var(--text-color);
+      z-index: 2;
+      resize: none;
+      border: none;
+      outline: none;
+    }
+
+    .line.heading-1 { color: var(--heading1); }
+    .line.heading-2 { color: var(--heading2); }
+    .line.heading-3 { color: var(--heading3); }
+    .line.heading-4 { color: var(--heading4); }
+    .line.heading-5 { color: var(--heading5); }
+    .line.regular { color: var(--text-color); }
+    .line { display: block; min-height: 1.5em; }
+
+    .control-panel {
+      flex-shrink: 0;
+      width: 80%;
+      margin: 10px auto;
+      display: flex;
+      gap: 15px;
+      align-items: center;
+    }
+
+    .icon-button {
+      cursor: pointer;
+      color: var(--text-color);
+      font-size: 20px;
+      padding: 8px;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+
+    .icon-button:hover {
+      background-color: var(--button-hover);
+    }
+
+    .tooltip {
+      position: relative;
+      display: inline-block;
+      margin-left: 10px;
+      font-size: 12px;
+    }
+
+    .tooltip .tooltiptext {
+      visibility: hidden;
+      width: 200px;
+      background-color: var(--button-bg);
+      color: var(--text-color);
+      text-align: center;
+      border-radius: 6px;
+      padding: 5px;
+      position: absolute;
+      z-index: 1;
+      bottom: 125%;
+      left: 50%;
+      margin-left: -100px;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .tooltip:hover .tooltiptext {
+      visibility: visible;
+      opacity: 1;
+    }
+
+    .auto-save-indicator {
+      font-size: 12px;
+      opacity: 0.7;
+      margin-left: auto;
+    }
+
+    #file-input {
+      display: none;
+    }
+
+    .folding-indicator {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      margin-right: 5px;
+      text-align: center;
+      line-height: 12px;
+      font-size: 10px;
+    }
+
+    .global-fold::after { content: "G"; }
+    .local-fold::after { content: "L"; }
+  </style>
+</head>
+<body data-theme="dark">
+  <div class="control-panel">
+    <i class="icon-button fas fa-save" title="Save" onclick="saveToLocalStorage()"></i>
+    <label class="icon-button" title="Load">
+      <i class="fas fa-folder-open"></i>
+      <input type="file" id="file-input" accept=".txt,.md,.markdown">
+    </label>
+    <i class="icon-button fas fa-moon" title="Toggle Theme" id="theme-icon" onclick="toggleTheme()"></i>
+    <span class="status" id="status">Showing All</span>
+    <span class="auto-save-indicator" id="auto-save-status"></span>
+    <div class="tooltip">
+      <i class="icon-button fas fa-info-circle"></i>
+      <span class="tooltiptext">
+        Per-section collapse states persist independently.<br>
+        Auto-saves every 10 seconds.
+      </span>
+    </div>
+  </div>
+
+  <div class="editor-container">
+    <pre id="highlighting"></pre>
+    <textarea id="editor" spellcheck="false"></textarea>
+  </div>
+
+<script>
+    const editor = document.getElementById('editor');
+    const highlighting = document.getElementById('highlighting');
+    const status = document.getElementById('status');
+    const fileInput = document.getElementById('file-input');
+
+    let foldState = 0;
+    let fullText = "";
+    let docState;
+
+    class DocumentState {
+      constructor(text) {
+        this.lines = text.split('\n');
+        this.structure = this.parseStructure();
+        this.cursorLine = 0;
+        this.calculateSubheadingCounts();
+      }
+
+      parseStructure() {
+        const structure = [];
+        let currentSection = null;
+        this.lines.forEach((line, index) => {
+          const level = this.getHeadingLevel(line);
+          if (level > 0) {
+            if (currentSection) structure.push(currentSection);
+            currentSection = {
+              heading: line,
+              level: level,
+              start: index,
+              end: null,
+              content: [],
+              collapsed: false,
+              subheadingCount: 0,
+              parentIndex: -1,
+              childIndices: []
+            };
+          } else if (currentSection) {
+            currentSection.content.push(line);
+          }
+        });
+        if (currentSection) structure.push(currentSection);
+        for (let i = 0; i < structure.length - 1; i++) {
+          structure[i].end = structure[i + 1].start - 1;
+        }
+        if (structure.length > 0) {
+          structure[structure.length - 1].end = this.lines.length - 1;
+        }
+        return structure;
+      }
+
+      calculateSubheadingCounts() {
+        let stack = [];
+        for (let i = 0; i < this.structure.length; i++) {
+          const current = this.structure[i];
+          current.childIndices = [];
+          while (stack.length > 0 && this.structure[stack[stack.length - 1]].level >= current.level) {
+            stack.pop();
+          }
+          if (stack.length > 0) {
+            current.parentIndex = stack[stack.length - 1];
+            this.structure[stack[stack.length - 1]].childIndices.push(i);
+          } else {
+            current.parentIndex = -1;
+          }
+          stack.push(i);
+        }
+        for (let i = 0; i < this.structure.length; i++) {
+          this.structure[i].subheadingCount = this.structure[i].childIndices.length;
+        }
+      }
+
+      getHeadingLevel(line) {
+        const match = line.match(/^#+/);
+        return match ? match[0].length : 0;
+      }
+
+      getDisplayedTextAndMapping() {
+        let displayedLines = [];
+        let mapping = new Array(this.lines.length);
+        let i = 0;
+        let headerMap = {};
+        this.structure.forEach(section => {
+          headerMap[section.start] = section;
+        });
+        while (i < this.lines.length) {
+          if (headerMap.hasOwnProperty(i)) {
+            let section = headerMap[i];
+            if (foldState > 0 && section.level > foldState) {
+              let lastDisplayed = displayedLines.length > 0 ? displayedLines.length - 1 : 0;
+              for (let j = i; j <= section.end; j++) {
+                mapping[j] = lastDisplayed;
+              }
+              i = section.end + 1;
+              continue;
+            }
+            let isCollapsed = section.collapsed;
+            let headerLine = this.lines[i];
+            if (isCollapsed) {
+              headerLine += " ...";
+            }
+            displayedLines.push(headerLine);
+            mapping[i] = displayedLines.length - 1;
+            if (isCollapsed) {
+              for (let j = i + 1; j <= section.end; j++) {
+                mapping[j] = displayedLines.length - 1;
+              }
+              i = section.end + 1;
+            } else {
+              i++;
+              while (i <= section.end) {
+                if (headerMap.hasOwnProperty(i)) break;
+                displayedLines.push(this.lines[i]);
+                mapping[i] = displayedLines.length - 1;
+                i++;
+              }
+            }
+          } else {
+            displayedLines.push(this.lines[i]);
+            mapping[i] = displayedLines.length - 1;
+            i++;
+          }
+        }
+        return { displayedText: displayedLines.join('\n'), mapping: mapping };
+      }
+
+      getFullText() {
+        return this.lines.join('\n');
+      }
+
+      updateSection(index, newHeading) {
+        if (index >= 0 && index < this.structure.length) {
+          this.structure[index].heading = newHeading;
+          this.lines[this.structure[index].start] = newHeading;
+        }
+      }
+
+      getSectionAtCursor() {
+        let current = null;
+        let currentIndex = -1;
+        for (let i = 0; i < this.structure.length; i++) {
+          const section = this.structure[i];
+          if (this.cursorLine >= section.start && this.cursorLine <= section.end) {
+            current = section;
+            currentIndex = i;
+          }
+        }
+        return current ? { section: current, index: currentIndex } : null;
+      }
+
+      updateCursorPosition(position) {
+        const textBeforeCursor = this.getFullText().substring(0, position);
+        this.cursorLine = (textBeforeCursor.match(/\n/g) || []).length;
+      }
+
+      setSectionCollapsedRecursive(sectionIndex, collapsed) {
+        this.structure[sectionIndex].collapsed = collapsed;
+        this.structure[sectionIndex].childIndices.forEach(childIndex => {
+          this.setSectionCollapsedRecursive(childIndex, collapsed);
+        });
+      }
+    }
+
+    function computeInverseMapping(mapping) {
+      const inverse = {};
+      for (let i = 0; i < mapping.length; i++) {
+        const d = mapping[i];
+        if (inverse[d] === undefined || i < inverse[d]) {
+          inverse[d] = i;
+        }
+      }
+      return inverse;
+    }
+
+    function toggleTheme() {
+      const body = document.body;
+      const isDark = body.getAttribute('data-theme') === 'dark';
+      body.setAttribute('data-theme', isDark ? 'light' : 'dark');
+      localStorage.setItem('theme', isDark ? 'light' : 'dark');
+      
+      const themeIcon = document.getElementById('theme-icon');
+      themeIcon.classList.toggle('fa-moon', !isDark);
+      themeIcon.classList.toggle('fa-sun', isDark);
+    }
+
+    function escapeHtml(text) {
+      return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function updateHighlighting() {
+      const lines = editor.value.split('\n').map(line => {
+        const headingMatch = line.match(/^(#+)(.*)$/);
+        if (headingMatch) {
+          const level = headingMatch[1].length;
+          let content = headingMatch[2];
+          const collapseMatch = content.match(/\s\.\.\.$/);
+          if (collapseMatch) {
+            return `<div class="line heading-${level}">${escapeHtml(headingMatch[1] + content)}</div>`;
+          }
+          return `<div class="line heading-${level}">${escapeHtml(headingMatch[1] + content)}</div>`;
+        }
+        return `<div class="line regular">${escapeHtml(line)}</div>`;
+      }).join('');
+      highlighting.innerHTML = lines;
+      highlighting.scrollTop = editor.scrollTop;
+      highlighting.scrollLeft = editor.scrollLeft;
+    }
+
+    function updateDisplayedText() {
+      const oldCursorPos = editor.selectionStart;
+      docState.updateCursorPosition(oldCursorPos);
+      const fullLines = docState.getFullText().split('\n');
+      let col = 0;
+      for (let i = 0; i < docState.cursorLine; i++) {
+        col += fullLines[i].length + 1;
+      }
+      const cursorCol = oldCursorPos - col;
+
+      const { displayedText, mapping } = docState.getDisplayedTextAndMapping();
+      editor.value = displayedText;
+      updateHighlighting();
+
+      const displayedLines = displayedText.split('\n');
+      let lineStarts = [0];
+      let pos = 0;
+      displayedLines.forEach(line => {
+        pos += line.length + 1;
+        lineStarts.push(pos);
+      });
+
+      const sectionInfo = docState.getSectionAtCursor();
+      let newPos;
+      if (sectionInfo && sectionInfo.section.collapsed) {
+        const displayedLineIndex = mapping[sectionInfo.section.start];
+        const startPos = lineStarts[displayedLineIndex];
+        const headingLength = sectionInfo.section.heading.length;
+        newPos = startPos + Math.min(cursorCol, headingLength);
+      } else {
+        const displayedCursorLine = mapping[docState.cursorLine];
+        if (displayedCursorLine !== undefined) {
+          const startPos = lineStarts[displayedCursorLine];
+          const displayedLineLength = displayedLines[displayedCursorLine].length;
+          newPos = startPos + Math.min(cursorCol, displayedLineLength);
+        } else {
+          newPos = 0;
+        }
+      }
+      editor.selectionStart = editor.selectionEnd = newPos;
+    }
+
+    function toggleFolding() {
+      foldState = (foldState + 1) % 3;
+      docState.structure.forEach(section => {
+        if (foldState === 0) {
+          section.collapsed = false;
+        } else if (foldState === 1) {
+          section.collapsed = (section.level === 1);
+        } else if (foldState === 2) {
+          section.collapsed = (section.level === 2);
+        }
+      });
+      updateDisplayedText();
+      updateStatusDisplay();
+    }
+
+    function toggleLocalFolding() {
+      const { mapping } = docState.getDisplayedTextAndMapping();
+      const inverseMapping = computeInverseMapping(mapping);
+      const displayedCursorLine = editor.value.substring(0, editor.selectionStart).split('\n').length - 1;
+      const fullTextCursorLine = inverseMapping[displayedCursorLine] || 0;
+      docState.cursorLine = fullTextCursorLine;
+      const sectionInfo = docState.getSectionAtCursor();
+      if (!sectionInfo) {
+        status.textContent = 'No section at cursor';
+        return;
+      }
+      const sectionIndex = sectionInfo.index;
+      const currentCollapsed = docState.structure[sectionIndex].collapsed;
+      docState.setSectionCollapsedRecursive(sectionIndex, !currentCollapsed);
+      updateDisplayedText();
+      updateStatusDisplay();
+    }
+
+    function harmonizeFolding() {
+      foldState = 0;
+      docState.structure.forEach(section => section.collapsed = false);
+      updateDisplayedText();
+      updateStatusDisplay();
+    }
+
+    function handleInput() {
+      fullText = editor.value;
+      docState = new DocumentState(fullText);
+      updateDisplayedText();
+    }
+
+    function syncScroll() {
+      highlighting.scrollTop = editor.scrollTop;
+      highlighting.scrollLeft = editor.scrollLeft;
+    }
+
+    function updateStatusDisplay() {
+      let statusText = "";
+      if (foldState > 0) {
+        statusText += `<span class="folding-indicator global-fold"></span>Global Fold: `;
+        if (foldState === 1) {
+          statusText += "Headings Only";
+        } else if (foldState === 2) {
+          statusText += "Levels 1-2";
+        }
+      }
+      const collapsedCount = docState.structure.filter(s => s.collapsed).length;
+      if (collapsedCount > 0) {
+        if (statusText) statusText += " | ";
+        statusText += `<span class="folding-indicator local-fold"></span>Local Collapsed: ${collapsedCount}`;
+      }
+      status.innerHTML = statusText || "Showing All";
+    }
+
+    function saveToLocalStorage() {
+      const content = docState.getFullText();
+      localStorage.setItem('mdEditorContent', content);
+      showAutoSaveStatus('Saved!');
+    }
+
+    function showAutoSaveStatus(message) {
+      const status = document.getElementById('auto-save-status');
+      status.textContent = message;
+      setTimeout(() => status.textContent = '', 2000);
+    }
+
+    function initializeEditor() {
+      let storedTheme = localStorage.getItem('theme') || 'dark';
+      document.body.setAttribute('data-theme', storedTheme);
+      
+      document.getElementById('theme-icon').className = 
+        `icon-button fas fa-${storedTheme === 'dark' ? 'moon' : 'sun'}`;
+
+      const savedContent = localStorage.getItem('mdEditorContent');
+      fullText = savedContent || "# Heading 1\nText under H1\n## Heading 2\nMore text\n### Heading 3\nFinal text\n## Empty Heading\n# Another Top Level\n### Sub Heading 3 under Another Top Level\nContent for sub heading";
+      
+      docState = new DocumentState(fullText);
+      updateDisplayedText();
+      updateStatusDisplay();
+    }
+
+    editor.addEventListener('input', handleInput);
+    editor.addEventListener('scroll', syncScroll);
+    editor.addEventListener('keydown', (e) => {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
+        editor.value = editor.value.substring(0, start) + '  ' +
+                      editor.value.substring(end);
+        editor.selectionStart = editor.selectionEnd = start + 2;
+        handleInput();
+      } else if (e.key === 'F2') {
+        e.preventDefault();
+        toggleFolding();
+      } else if (e.key === 'F1') {
+        e.preventDefault();
+        toggleLocalFolding();
+      }
+    });
+
+    editor.addEventListener('keyup', function(e) {
+      const cursorPos = editor.selectionStart;
+      docState.updateCursorPosition(cursorPos);
+    });
+
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        fullText = e.target.result;
+        docState = new DocumentState(fullText);
+        updateDisplayedText();
+        updateStatusDisplay();
+        saveToLocalStorage();
+        fileInput.value = '';
+      };
+      reader.readAsText(file);
+    });
+
+    initializeEditor();
+    setInterval(() => {
+      if (docState && editor.value !== docState.getFullText()) {
+        saveToLocalStorage();
+        showAutoSaveStatus('Auto-saved');
+      }
+    }, 10000);
+</script>
+</body>
+</html>
